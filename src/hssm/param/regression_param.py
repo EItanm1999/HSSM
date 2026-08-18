@@ -154,6 +154,7 @@ class RegressionParam(Param):
         if self.formula is None:
             raise ValueError(f"Formula not specified for parameter {self.name}.")
         self.reformat_formula()
+        self._warn_if_bounded_without_link()
         if isinstance(self.prior, bmb.Prior):
             raise ValueError(
                 "Please specify priors for each individual parameter in the "
@@ -172,6 +173,35 @@ class RegressionParam(Param):
             return
         self.prior = cast("dict[str, Any]", self.prior)
         self.prior = _make_prior_dict(self.prior)
+
+    def _warn_if_bounded_without_link(self) -> None:
+        """Warn when a parameter with finite bounds enters a regression unlinked.
+
+        With the identity link the regression is composed in the parameter's own
+        space and the interval transform is applied to the Intercept alone, so
+        nothing constrains the composed per-observation value to the declared
+        bounds. The two terms also have mismatched sensitivities: the derivative
+        with respect to the Intercept vanishes near a bound while the derivative
+        with respect to a group offset stays flat at sigma. In hierarchical models
+        this costs sampling efficiency and can place draws outside the bounds.
+
+        ``link_settings="log_logit"`` composes in link space instead and avoids
+        both. This is a warning only - no behaviour changes.
+        """
+        if self.link is not None or self.bounds is None:
+            return
+        lower, upper = self.bounds
+        if np.isneginf(lower) or np.isposinf(upper):
+            return
+        _logger.warning(
+            "Parameter %s has explicit bounds (%g, %g) but is used in a regression "
+            "with the identity link, so the bounds constrain only the Intercept and "
+            'not the composed value. Consider link_settings="log_logit". See the '
+            "hierarchical modeling documentation.",
+            self.name,
+            lower,
+            upper,
+        )
 
     def set_loglogit_link(self):
         """Override the default link function.
