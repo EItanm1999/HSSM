@@ -62,8 +62,10 @@ def test_from_defaults():
 
 
 def test_update_config():
+    """update_config copies every user-set ModelConfig field onto the Config."""
     config1 = Config.from_defaults("ddm", "analytical")
     assert config1.response == ["rt", "response"]
+    assert config1.ndt_edge_width is None
 
     v_prior, v_bounds = config1.get_defaults("v")
 
@@ -77,6 +79,7 @@ def test_update_config():
             "t": hssm.Prior("Uniform", lower=-5, upper=5),
             "v": hssm.Prior("Normal"),
         },
+        ndt_edge_width=3.0,
     )
 
     config1.update_config(user_config)
@@ -85,6 +88,7 @@ def test_update_config():
     assert config1.backend is None
     assert "t" in config1.default_priors
     assert "a" not in config1.default_priors
+    assert config1.ndt_edge_width == 3.0
 
     v_prior, v_bounds = config1.get_defaults("v")
 

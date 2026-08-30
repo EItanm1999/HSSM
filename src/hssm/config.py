@@ -54,6 +54,10 @@ class BaseModelConfig(ABC):
     loglik: LogLik | None = None
     loglik_kind: LoglikKind | None = None
     backend: Literal["jax", "pytensor"] | None = None
+    # Admissibility-floor width for models with trial-to-trial ndt variability,
+    # in units of st below t (floor at t - ndt_edge_width * st). None -> 1.0,
+    # exact for a compact uniform kernel; unbounded kernels (Normal-t) use 3.0.
+    ndt_edge_width: float | None = None
 
     # Additional data requirements
     extra_fields: list[str] | None = None
@@ -239,6 +243,9 @@ class Config(BaseModelConfig):
         ):
             self.backend = user_config.backend
 
+        if user_config.ndt_edge_width is not None:
+            self.ndt_edge_width = user_config.ndt_edge_width
+
         self.default_priors |= user_config.default_priors
         self.bounds |= user_config.bounds
         self.extra_fields = user_config.extra_fields
@@ -331,6 +338,11 @@ class ModelConfig:
     backend: Literal["jax", "pytensor"] | None = None
     rv: RandomVariable | None = None
     extra_fields: list[str] | None = None
+    # Admissibility-floor width for models with trial-to-trial ndt variability,
+    # in units of st below t: logp is floored for rt <= t - ndt_edge_width * st.
+    # None -> 1.0, exact for a compact uniform kernel of half-width st. Unbounded
+    # kernels (e.g. Normal(t, st)) should set 3.0 (the practical 3-sigma edge).
+    ndt_edge_width: float | None = None
 
 
 def _normalize_model_config_with_choices(

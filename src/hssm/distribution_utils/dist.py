@@ -92,6 +92,7 @@ def ensure_positive_ndt(
     logp: Any,
     list_params: list[str],
     dist_params: Sequence[Any],
+    edge_width: float = 1.0,
 ) -> pt.TensorVariable:
     """Ensure that response times fall inside the model's support.
 
@@ -113,6 +114,14 @@ def ensure_positive_ndt(
     ``[t - st, t - st / 2)``, which the wrapper maps to the same lower bound
     applied here.
 
+    ``edge_width`` scales that shift: the floor sits at ``t - edge_width * st``,
+    so the default of 1.0 is the half-width case above. A kernel with unbounded
+    support - e.g. ``Normal(t, st)``, where ``st`` is a standard deviation and
+    real density extends below ``t - st`` - opts in to a wider edge by declaring
+    ``ndt_edge_width`` on the model config or in a registered model's likelihood
+    entry (3.0 places the floor at the kernel's practical 3-sigma edge). It has
+    no effect on models without ``st``.
+
     Parameters
     ----------
     data
@@ -126,6 +135,9 @@ def ensure_positive_ndt(
     dist_params
         A list of parameters used in the likelihood computation. The parameters
         can be both scalars and arrays.
+    edge_width : optional
+        Position of the floor in units of ``st`` below ``t``, as described
+        above. Defaults to 1.0.
 
     Returns
     -------
@@ -143,7 +155,7 @@ def ensure_positive_ndt(
     # in parameters that leave the response-time support alone, so they are
     # deliberately not consulted.
     if "st" in list_params:
-        min_rt = min_rt - dist_params[list_params.index("st")]
+        min_rt = min_rt - edge_width * dist_params[list_params.index("st")]
 
     # Skip the check for missing data (encoded as -999.0)
     missing_mask = pt.eq(rt, -999.0)
@@ -466,6 +478,7 @@ def make_distribution(
     fixed_vector_params: dict[str, np.ndarray] | None = None,
     params_is_trialwise: list[bool] | None = None,
     is_choice_only: bool = False,
+    ndt_edge_width: float | None = None,
 ) -> type[pm.Distribution]:
     """Make a `pymc.Distribution`.
 
@@ -512,6 +525,15 @@ def make_distribution(
         When ``None``, no graph-level broadcasting is applied.
     is_choice_only : optional
         Whether the model is a choice-only model.
+    ndt_edge_width : optional
+        Width of the response-time admissibility floor in units of ``st`` below
+        ``t``, forwarded to :func:`ensure_positive_ndt` (which floors the logp
+        for ``rt <= t - ndt_edge_width * st``). ``None`` (the default) means
+        1.0, exact for a compact uniform non-decision-time kernel of half-width
+        ``st``. Models whose kernel has unbounded support - e.g. ``Normal(t,
+        st)``, where ``st`` is a standard deviation - should pass 3.0 to place
+        the floor at the kernel's practical 3-sigma edge. Has no effect on
+        models without ``st``.
 
     Returns
     -------
@@ -544,6 +566,7 @@ def make_distribution(
     # random_variable = make_ssm_rv(rv, list_params, lapse)
     # if isinstance(rv, str) else rv
     extra_fields = [] if extra_fields is None else extra_fields
+    _ndt_edge_width = 1.0 if ndt_edge_width is None else ndt_edge_width
 
     # Pre-build PyTensor tensors for fixed-vector params. These replace the
     # scalar constants that Bambi provides, at the correct positions in the
@@ -650,7 +673,9 @@ def make_distribution(
                 # AF-TODO potentially apply clipping here
                 logp = loglik(data, *dist_params, *extra_fields)
                 if not is_choice_only:
-                    logp = ensure_positive_ndt(data, logp, list_params, dist_params)
+                    logp = ensure_positive_ndt(
+                        data, logp, list_params, dist_params, _ndt_edge_width
+                    )
                 logp = pt.log(
                     (1.0 - p_outlier) * pt.exp(logp)
                     + p_outlier * pt.exp(lapse_logp)
@@ -659,7 +684,9 @@ def make_distribution(
             else:
                 logp = loglik(data, *dist_params, *extra_fields)
                 if not is_choice_only:
-                    logp = ensure_positive_ndt(data, logp, list_params, dist_params)
+                    logp = ensure_positive_ndt(
+                        data, logp, list_params, dist_params, _ndt_edge_width
+                    )
 
             if bounds is not None:
                 logp = apply_param_bounds_to_loglik(
